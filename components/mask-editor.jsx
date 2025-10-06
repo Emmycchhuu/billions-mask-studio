@@ -24,6 +24,8 @@ export function MaskEditor({ imageUrl }) {
   const [initialPinchDistance, setInitialPinchDistance] = useState(null)
   const [initialSize, setInitialSize] = useState(null)
   const [initialRotation, setInitialRotation] = useState(0)
+  const [isInteracting, setIsInteracting] = useState(false)
+  const [isTouchingMask, setIsTouchingMask] = useState(false)
 
   const canvasRef = useRef(null)
   const imageRef = useRef(null)
@@ -34,16 +36,17 @@ export function MaskEditor({ imageUrl }) {
     const dx = canvasX - maskTransform.x
     const dy = canvasY - maskTransform.y
 
-    // Rotate the point back to check if it's within the mask bounds
     const angle = (-maskTransform.rotation * Math.PI) / 180
     const rotatedX = dx * Math.cos(angle) - dy * Math.sin(angle)
     const rotatedY = dx * Math.sin(angle) + dy * Math.cos(angle)
 
-    // Check if within mask rectangle
-    return Math.abs(rotatedX) <= maskTransform.width / 2 && Math.abs(rotatedY) <= maskTransform.height / 2
+    const touchPadding = 30
+    return (
+      Math.abs(rotatedX) <= maskTransform.width / 2 + touchPadding &&
+      Math.abs(rotatedY) <= maskTransform.height / 2 + touchPadding
+    )
   }
 
-  // Load face detection models and detect face
   useEffect(() => {
     const initFaceDetection = async () => {
       setIsLoading(true)
@@ -57,7 +60,6 @@ export function MaskEditor({ imageUrl }) {
       img.onload = async () => {
         imageRef.current = img
 
-        // Wait for models to load
         await modelsPromise
 
         const detection = await detectFace(img)
@@ -89,7 +91,6 @@ export function MaskEditor({ imageUrl }) {
     initFaceDetection()
   }, [imageUrl])
 
-  // Load mask image
   useEffect(() => {
     const img = new Image()
     img.crossOrigin = "anonymous"
@@ -100,10 +101,9 @@ export function MaskEditor({ imageUrl }) {
     }
   }, [selectedMask])
 
-  // Redraw canvas when transform changes
   useEffect(() => {
     drawCanvas()
-  }, [maskTransform])
+  }, [maskTransform, isInteracting])
 
   const drawCanvas = () => {
     const canvas = canvasRef.current
@@ -134,6 +134,14 @@ export function MaskEditor({ imageUrl }) {
         maskTransform.height,
       )
 
+      if (isInteracting) {
+        ctx.strokeStyle = "rgba(249, 115, 22, 0.8)"
+        ctx.lineWidth = 3
+        ctx.setLineDash([10, 5])
+        ctx.strokeRect(-maskTransform.width / 2, -maskTransform.height / 2, maskTransform.width, maskTransform.height)
+        ctx.setLineDash([])
+      }
+
       ctx.restore()
     }
   }
@@ -158,24 +166,41 @@ export function MaskEditor({ imageUrl }) {
       const y = (touch.clientY - rect.top) * scaleY
 
       if (isTouchOnMask(x, y)) {
+        setIsTouchingMask(true)
         setIsDragging(true)
+        setIsInteracting(true)
         setDragStart({ x: x - maskTransform.x, y: y - maskTransform.y })
         setTouchStart({ x: touch.clientX, y: touch.clientY })
+        e.preventDefault() // Prevent scrolling only when on mask
+      } else {
+        setIsTouchingMask(false)
       }
     } else if (e.touches.length === 2) {
-      // Two touches - pinch and rotate
-      setIsDragging(false)
-      const distance = getTouchDistance(e.touches[0], e.touches[1])
-      const angle = getTouchAngle(e.touches[0], e.touches[1])
-      setInitialPinchDistance(distance)
-      setInitialSize(maskTransform.width)
-      setInitialRotation(maskTransform.rotation - angle)
+      const rect = canvasRef.current.getBoundingClientRect()
+      const scaleX = canvasRef.current.width / rect.width
+      const scaleY = canvasRef.current.height / rect.height
+      const touch1 = e.touches[0]
+      const x1 = (touch1.clientX - rect.left) * scaleX
+      const y1 = (touch1.clientY - rect.top) * scaleY
+
+      if (isTouchOnMask(x1, y1)) {
+        setIsTouchingMask(true)
+        setIsDragging(false)
+        setIsInteracting(true)
+        const distance = getTouchDistance(e.touches[0], e.touches[1])
+        const angle = getTouchAngle(e.touches[0], e.touches[1])
+        setInitialPinchDistance(distance)
+        setInitialSize(maskTransform.width)
+        setInitialRotation(maskTransform.rotation - angle)
+        e.preventDefault() // Prevent zoom only when on mask
+      } else {
+        setIsTouchingMask(false)
+      }
     }
   }
 
   const handleTouchMove = (e) => {
-    if (e.touches.length === 1 && isDragging) {
-      // Single touch drag - only prevent default when dragging the mask
+    if (e.touches.length === 1 && isDragging && isTouchingMask) {
       e.preventDefault()
       const rect = canvasRef.current.getBoundingClientRect()
       const scaleX = canvasRef.current.width / rect.width
@@ -189,13 +214,12 @@ export function MaskEditor({ imageUrl }) {
         x: x - dragStart.x,
         y: y - dragStart.y,
       }))
-    } else if (e.touches.length === 2 && initialPinchDistance) {
-      // Pinch to zoom and rotate - prevent default when using two fingers
+    } else if (e.touches.length === 2 && initialPinchDistance && isTouchingMask) {
       e.preventDefault()
       const currentDistance = getTouchDistance(e.touches[0], e.touches[1])
       const currentAngle = getTouchAngle(e.touches[0], e.touches[1])
       const scale = currentDistance / initialPinchDistance
-      const newSize = Math.max(50, Math.min(800, initialSize * scale))
+      const newSize = Math.max(20, Math.min(2000, initialSize * scale))
       const newRotation = initialRotation + currentAngle
 
       setMaskTransform((prev) => ({
@@ -205,11 +229,12 @@ export function MaskEditor({ imageUrl }) {
         rotation: newRotation,
       }))
     }
-    // If not dragging or pinching, allow normal scrolling (no preventDefault)
   }
 
   const handleTouchEnd = () => {
     setIsDragging(false)
+    setIsInteracting(false)
+    setIsTouchingMask(false)
     setInitialPinchDistance(null)
     setInitialSize(null)
     setTouchStart(null)
@@ -225,6 +250,7 @@ export function MaskEditor({ imageUrl }) {
 
     if (isTouchOnMask(x, y)) {
       setIsDragging(true)
+      setIsInteracting(true)
       setDragStart({ x: x - maskTransform.x, y: y - maskTransform.y })
     }
   }
@@ -248,6 +274,7 @@ export function MaskEditor({ imageUrl }) {
 
   const handleMouseUp = () => {
     setIsDragging(false)
+    setIsInteracting(false)
   }
 
   const handleWheel = (e) => {
@@ -273,8 +300,8 @@ export function MaskEditor({ imageUrl }) {
   const adjustSize = (delta) => {
     setMaskTransform((prev) => ({
       ...prev,
-      width: Math.max(50, Math.min(800, prev.width + delta)),
-      height: Math.max(50, Math.min(800, prev.height + delta)),
+      width: Math.max(20, Math.min(2000, prev.width + delta)),
+      height: Math.max(20, Math.min(2000, prev.height + delta)),
     }))
   }
 
@@ -295,7 +322,6 @@ export function MaskEditor({ imageUrl }) {
 
   return (
     <div className="grid lg:grid-cols-[1fr_320px] gap-6">
-      {/* Canvas Area */}
       <div className="space-y-4">
         <Card className="p-4 bg-black/50 relative overflow-hidden">
           {isLoading && (
@@ -323,7 +349,6 @@ export function MaskEditor({ imageUrl }) {
           </div>
         </Card>
 
-        {/* Quick Controls */}
         <div className="flex flex-wrap gap-2">
           <Button
             variant="outline"
@@ -380,9 +405,7 @@ export function MaskEditor({ imageUrl }) {
         </div>
       </div>
 
-      {/* Sidebar Controls */}
       <div className="space-y-6">
-        {/* Mask Library */}
         <Card className="p-4">
           <h3 className="font-semibold mb-4 text-orange-500">Choose Mask</h3>
           <div className="grid grid-cols-3 gap-2">
@@ -407,7 +430,6 @@ export function MaskEditor({ imageUrl }) {
           <p className="text-xs text-muted-foreground mt-3 text-center">{selectedMask.name}</p>
         </Card>
 
-        {/* Fine Controls */}
         <Card className="p-4 space-y-6">
           <div className="space-y-3">
             <label className="text-sm font-medium text-yellow-500">Size</label>
@@ -420,8 +442,8 @@ export function MaskEditor({ imageUrl }) {
                   height: value,
                 }))
               }
-              min={50}
-              max={800}
+              min={20}
+              max={2000}
               step={5}
               className="[&_[role=slider]]:bg-yellow-500"
             />
@@ -454,14 +476,15 @@ export function MaskEditor({ imageUrl }) {
           </div>
         </Card>
 
-        {/* Tips */}
         <Card className="p-4 bg-gradient-to-br from-orange-500/10 to-red-500/10 border-orange-500/20">
           <h4 className="text-sm font-semibold mb-2 text-orange-500">Tips</h4>
           <ul className="text-xs text-muted-foreground space-y-1">
-            <li>• Drag with one finger/mouse to move</li>
+            <li>• Touch the mask to see orange border</li>
+            <li>• Drag with one finger to move</li>
             <li>• Pinch with two fingers to resize</li>
             <li>• Rotate with two fingers</li>
-            <li>• Scroll wheel to zoom in/out</li>
+            <li>• Unlimited size - make it huge or tiny</li>
+            <li>• Touch outside mask to scroll page</li>
           </ul>
         </Card>
       </div>
