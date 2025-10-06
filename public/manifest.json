@@ -1,0 +1,17 @@
+{
+  "name": "Billions Mask Studio",
+  "short_name": "Billions Masks",
+  "description": "Try on exclusive Billions masks with automatic face detection",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#f97316",
+  "icons": [
+    {
+      "src": "/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
